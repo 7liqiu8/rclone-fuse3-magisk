@@ -19,6 +19,19 @@ load_env() {
     . "$RCLONE_CONFIG_DIR/env"
     set +a
   fi
+
+  export RCLONEDIR="$MODPATH"
+  export PATH="$MODPATH/vendor/bin:$MODPATH/system/vendor/bin:$PATH"
+
+  if [ -z "$RCLONE_CONFIG" ]; then
+    if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/rclone.conf" ]; then
+      export RCLONE_CONFIG="$RCLONE_CONFIG_DIR/rclone.conf"
+    elif [ -f "$MODPATH/conf/rclone.conf" ]; then
+      export RCLONE_CONFIG="$MODPATH/conf/rclone.conf"
+    fi
+  fi
+
+  [ -n "$RCLONE_LOG_DIR" ] && mkdir -p "$RCLONE_LOG_DIR"
 }
 
 find_bin() {
@@ -30,12 +43,11 @@ find_bin() {
     "/vendor/bin/$NAME" \
     "/system/bin/$NAME"
   do
-    if [ -x "$BIN" ]; then
+    [ -x "$BIN" ] && {
       echo "$BIN"
       return 0
-    fi
+    }
   done
-
   command -v "$NAME" 2>/dev/null
 }
 
@@ -44,20 +56,18 @@ init_bins() {
   RCLONE_MOUNT_BIN="$(find_bin rclone-mount)"
   RCLONE_WEB_BIN="$(find_bin rclone-web)"
 
-  if [ -z "$RCLONE_BIN" ]; then
+  [ -z "$RCLONE_BIN" ] && {
     log_msg "Error: rclone binary not found."
     exit 1
-  fi
-
-  if [ -z "$RCLONE_MOUNT_BIN" ]; then
+  }
+  [ -z "$RCLONE_MOUNT_BIN" ] && {
     log_msg "Error: rclone-mount binary not found."
     exit 1
-  fi
-
-  if [ -z "$RCLONE_WEB_BIN" ]; then
+  }
+  [ -z "$RCLONE_WEB_BIN" ] && {
     log_msg "Error: rclone-web binary not found."
     exit 1
-  fi
+  }
 }
 
 pid_is_running() {
@@ -68,9 +78,7 @@ stop_pid_file() {
   NAME="$1"
   PIDFILE="$2"
 
-  if [ ! -f "$PIDFILE" ]; then
-    return 0
-  fi
+  [ ! -f "$PIDFILE" ] && return 0
 
   PID="$(cat "$PIDFILE" 2>/dev/null)"
   rm -f "$PIDFILE"
@@ -86,10 +94,7 @@ stop_pid_file() {
       COUNT=$((COUNT + 1))
     done
 
-    if pid_is_running "$PID"; then
-      kill -9 "$PID" 2>/dev/null
-    fi
-
+    pid_is_running "$PID" && kill -9 "$PID" 2>/dev/null
     log_msg "$NAME stopped."
   else
     log_msg "Found a stale PID file for $NAME. Removed."
@@ -104,12 +109,23 @@ stop_sync() {
   stop_pid_file "RClone Sync Service" "$RCLONESYNC_PID"
 }
 
+umount_if_mounted() {
+  TARGET="$1"
+  mount | grep -q " $TARGET " 2>/dev/null && umount -l "$TARGET" 2>/dev/null
+}
+
 stop_mounts() {
   log_msg "Stopping rclone mounts..."
 
-  for mp in /mnt/rclone-*; do
-    [ -e "$mp" ] || continue
-    umount -l "$mp" 2>/dev/null
+  for remote in $("${RCLONE_BIN}" listremotes 2>/dev/null | sed 's/:$//'); do
+    [ -n "$remote" ] || continue
+    umount_if_mounted "/mnt/runtime/full/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/write/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/read/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/default/emulated/0/$remote"
+    umount_if_mounted "/mnt/pass_through/0/emulated/0/$remote"
+    umount_if_mounted "/data/media/0/$remote"
+    umount_if_mounted "/mnt/rclone-$remote"
   done
 
   for proc in /proc/[0-9]*; do
@@ -117,7 +133,7 @@ stop_mounts() {
     [ -r "$proc/cmdline" ] || continue
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *"rclone mount "*|*"rclone-mount "*)
+      *" rclone mount "*|*"rclone-mount "*)
         kill "$PID" 2>/dev/null
         ;;
     esac
@@ -130,7 +146,7 @@ stop_mounts() {
     [ -r "$proc/cmdline" ] || continue
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *"rclone mount "*|*"rclone-mount "*)
+      *" rclone mount "*|*"rclone-mount "*)
         kill -9 "$PID" 2>/dev/null
         ;;
     esac
@@ -142,10 +158,10 @@ stop_mounts() {
 start_mounts() {
   log_msg "Starting rclone mounts..."
 
-  "$RCLONE_BIN" listremotes | sed 's/:$//' | while read -r remote; do
+  "${RCLONE_BIN}" listremotes | sed 's/:$//' | while read -r remote; do
     [ -n "$remote" ] || continue
     log_msg "Mounting $remote => /mnt/rclone-$remote => /sdcard/$remote"
-    "$RCLONE_MOUNT_BIN" "$remote" --daemon
+    "${RCLONE_MOUNT_BIN}" "$remote" --daemon
   done
 
   log_msg "All remotes mounted."
@@ -176,7 +192,7 @@ start_web() {
   esac
 
   log_msg "RClone Web GUI will start at: ${URL}"
-  nohup "$RCLONE_WEB_BIN" > "$RCLONE_LOG_DIR/rclone-web.log" 2>&1 &
+  nohup "${RCLONE_WEB_BIN}" > "$RCLONE_LOG_DIR/rclone-web.log" 2>&1 &
   PID=$!
   echo "$PID" > "$RCLONEWEB_PID"
   log_msg "RClone Web GUI started with PID($PID)."
@@ -213,7 +229,6 @@ stop_stack() {
 }
 
 load_env
-mkdir -p "$RCLONE_LOG_DIR"
 init_bins
 
 ACTION="${1:-restart}"

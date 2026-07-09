@@ -71,9 +71,28 @@ for mp in /mnt/rclone-*; do
 done
 
 echo "Killing rclone processes..."
-pgrep -f "rclone" >/dev/null && {
-  pkill -f "rclone"
-  sleep 1
-  pgrep -f "rclone" >/dev/null && pkill -9 -f "rclone"
-  echo "rclone processes killed."
-} || echo "no rclone processes found."
+for proc in /proc/[0-9]*; do
+  PID="${proc##*/}"
+  [ -r "$proc/cmdline" ] || continue
+  CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
+  case "$CMDLINE" in
+    *" rclone mount "*|*"rclone-mount "*|*" rclone rcd "*|*"rclone-web "*)
+      kill "$PID" 2>/dev/null
+      ;;
+  esac
+done
+
+sleep 1
+
+for proc in /proc/[0-9]*; do
+  PID="${proc##*/}"
+  [ -r "$proc/cmdline" ] || continue
+  CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
+  case "$CMDLINE" in
+    *" rclone mount "*|*"rclone-mount "*|*" rclone rcd "*|*"rclone-web "*)
+      kill -9 "$PID" 2>/dev/null
+      ;;
+  esac
+done
+
+echo "Done."

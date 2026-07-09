@@ -1,11 +1,29 @@
 #!/system/bin/sh
 
-set -a && . "${RCLONEDIR:-/data/adb/modules/rclone}/env" && set +a
+BASE="${RCLONEDIR:-/data/adb/modules/rclone}"
+
+set -a
+. "$BASE/env"
+set +a
+
+[ -f "$RCLONE_CONFIG_DIR/env" ] && {
+  set -a
+  . "$RCLONE_CONFIG_DIR/env"
+  set +a
+}
+
+export PATH="$BASE/vendor/bin:$BASE/system/vendor/bin:$PATH"
+
+if [ -z "$RCLONE_CONFIG" ]; then
+  if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/rclone.conf" ]; then
+    export RCLONE_CONFIG="$RCLONE_CONFIG_DIR/rclone.conf"
+  elif [ -f "$BASE/conf/rclone.conf" ]; then
+    export RCLONE_CONFIG="$BASE/conf/rclone.conf"
+  fi
+fi
 
 find_bin() {
   NAME="$1"
-  BASE="${RCLONEDIR:-/data/adb/modules/rclone}"
-
   for BIN in \
     "$BASE/vendor/bin/$NAME" \
     "$BASE/system/vendor/bin/$NAME" \
@@ -13,19 +31,24 @@ find_bin() {
     "/vendor/bin/$NAME" \
     "/system/bin/$NAME"
   do
-    if [ -x "$BIN" ]; then
+    [ -x "$BIN" ] && {
       echo "$BIN"
       return 0
-    fi
+    }
   done
-
   command -v "$NAME" 2>/dev/null
 }
 
 RCLONE_BIN="$(find_bin rclone)"
+FUSERMOUNT_BIN="$(find_bin fusermount3)"
 
 if [ -z "$RCLONE_BIN" ]; then
   echo "Error: rclone binary not found."
+  exit 1
+fi
+
+if [ -z "$FUSERMOUNT_BIN" ]; then
+  echo "Error: fusermount3 binary not found."
   exit 1
 fi
 
@@ -43,7 +66,7 @@ shift
 MNT_DIR="/mnt/rclone-$NAME"
 mkdir -p "$MNT_DIR"
 
-nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" "$@"
+nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" --daemon "$@"
 RC=$?
 
 if [ "$RC" -eq 0 ]; then

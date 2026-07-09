@@ -1,12 +1,79 @@
 #!/system/bin/sh
-#load environment file
-set -a && . "${RCLONEDIR:-/data/adb/modules/rclone}/env" && set +a
 
-echo "Unmounting rclone mounts..."
-mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
-    fusermount3  -u "$mp" && echo "- umounted: $mp" || echo "- failed: $mp"
+BASE="${RCLONEDIR:-/data/adb/modules/rclone}"
+
+set -a
+. "$BASE/env"
+set +a
+
+[ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/env" ] && {
+  set -a
+  . "$RCLONE_CONFIG_DIR/env"
+  set +a
+}
+
+export PATH="$BASE/vendor/bin:$BASE/system/vendor/bin:$PATH"
+
+find_bin() {
+  NAME="$1"
+  for BIN in \
+    "$BASE/vendor/bin/$NAME" \
+    "$BASE/system/vendor/bin/$NAME" \
+    "$BASE/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    [ -x "$BIN" ] && {
+      echo "$BIN"
+      return 0
+    }
+  done
+  command -v "$NAME" 2>/dev/null
+}
+
+RCLONE_BIN="$(find_bin rclone)"
+FUSERMOUNT_BIN="$(find_bin fusermount3)"
+
+umount_if_mounted() {
+  TARGET="$1"
+  mount | grep -q " $TARGET " 2>/dev/null && umount -l "$TARGET" 2>/dev/null
+}
+
+echo "Unmounting Android bind mounts..."
+if [ -n "$RCLONE_BIN" ]; then
+  "$RCLONE_BIN" listremotes 2>/dev/null | sed 's/:$//' | while read -r remote; do
+    [ -n "$remote" ] || continue
+    umount_if_mounted "/mnt/runtime/full/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/write/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/read/emulated/0/$remote"
+    umount_if_mounted "/mnt/runtime/default/emulated/0/$remote"
+    umount_if_mounted "/mnt/pass_through/0/emulated/0/$remote"
+    umount_if_mounted "/data/media/0/$remote"
+  done
+fi
+
+echo "Unmounting rclone FUSE mounts..."
+if [ -n "$FUSERMOUNT_BIN" ]; then
+  mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+    "$FUSERMOUNT_BIN" -u "$mp" && echo "- unmounted: $mp" || echo "- failed: $mp"
+  done
+else
+  echo "fusermount3 not found, fallback to lazy umount."
+  mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+    umount -l "$mp" 2>/dev/null && echo "- unmounted: $mp" || echo "- failed: $mp"
+  done
+fi
+
+echo "Cleaning residual mount points..."
+for mp in /mnt/rclone-*; do
+  [ -e "$mp" ] || continue
+  umount_if_mounted "$mp"
 done
 
-# Kill all Rclone-related processes
 echo "Killing rclone processes..."
-pgrep -f "rclone" >/dev/null && { pkill -f "rclone"; echo "rclone processes killed."; } || echo "no rclone processes found."
+pgrep -f "rclone" >/dev/null && {
+  pkill -f "rclone"
+  sleep 1
+  pgrep -f "rclone" >/dev/null && pkill -9 -f "rclone"
+  echo "rclone processes killed."
+} || echo "no rclone processes found."

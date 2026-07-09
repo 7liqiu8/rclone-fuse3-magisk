@@ -1,5 +1,25 @@
 #!/system/bin/sh
 
+[ -z "$MODPATH" ] && MODPATH="${0%/*}"
+
+set -a && . "$MODPATH/env" && set +a
+if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/env" ]; then
+  set -a && . "$RCLONE_CONFIG_DIR/env" && set +a
+fi
+
+export RCLONEDIR="$MODPATH"
+export PATH="$MODPATH/vendor/bin:$MODPATH/system/vendor/bin:$PATH"
+
+if [ -z "$RCLONE_CONFIG" ]; then
+  if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/rclone.conf" ]; then
+    export RCLONE_CONFIG="$RCLONE_CONFIG_DIR/rclone.conf"
+  elif [ -f "$MODPATH/conf/rclone.conf" ]; then
+    export RCLONE_CONFIG="$MODPATH/conf/rclone.conf"
+  fi
+fi
+
+[ -n "$RCLONE_LOG_DIR" ] && mkdir -p "$RCLONE_LOG_DIR"
+
 find_bin() {
   NAME="$1"
   for BIN in \
@@ -9,12 +29,11 @@ find_bin() {
     "/vendor/bin/$NAME" \
     "/system/bin/$NAME"
   do
-    if [ -x "$BIN" ]; then
+    [ -x "$BIN" ] && {
       echo "$BIN"
       return 0
-    fi
+    }
   done
-
   command -v "$NAME" 2>/dev/null
 }
 

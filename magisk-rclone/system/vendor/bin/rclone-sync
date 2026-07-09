@@ -1,7 +1,34 @@
 #!/system/bin/sh
-#load environment file
+
 set -a && . "${RCLONEDIR:-/data/adb/modules/rclone}/env" && set +a
+
+find_bin() {
+  NAME="$1"
+  BASE="${RCLONEDIR:-/data/adb/modules/rclone}"
+
+  for BIN in \
+    "$BASE/vendor/bin/$NAME" \
+    "$BASE/system/vendor/bin/$NAME" \
+    "$BASE/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    if [ -x "$BIN" ]; then
+      echo "$BIN"
+      return 0
+    fi
+  done
+
+  command -v "$NAME" 2>/dev/null
+}
+
+RCLONE_BIN="$(find_bin rclone)"
+
+if [ -z "$RCLONE_BIN" ]; then
+  echo "Error: rclone binary not found."
+  exit 1
+fi
 
 [ -n "$RCLONE_RC" ] && unset RCLONE_RC
 
-rclone sync "$@"
+exec "$RCLONE_BIN" sync "$@"

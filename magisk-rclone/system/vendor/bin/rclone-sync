@@ -6,7 +6,7 @@ set -a
 . "$BASE/env"
 set +a
 
-[ -f "$RCLONE_CONFIG_DIR/env" ] && {
+[ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/env" ] && {
   set -a
   . "$RCLONE_CONFIG_DIR/env"
   set +a

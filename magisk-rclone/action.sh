@@ -21,6 +21,45 @@ load_env() {
   fi
 }
 
+find_bin() {
+  NAME="$1"
+  for BIN in \
+    "$MODPATH/vendor/bin/$NAME" \
+    "$MODPATH/system/vendor/bin/$NAME" \
+    "$MODPATH/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    if [ -x "$BIN" ]; then
+      echo "$BIN"
+      return 0
+    fi
+  done
+
+  command -v "$NAME" 2>/dev/null
+}
+
+init_bins() {
+  RCLONE_BIN="$(find_bin rclone)"
+  RCLONE_MOUNT_BIN="$(find_bin rclone-mount)"
+  RCLONE_WEB_BIN="$(find_bin rclone-web)"
+
+  if [ -z "$RCLONE_BIN" ]; then
+    log_msg "Error: rclone binary not found."
+    exit 1
+  fi
+
+  if [ -z "$RCLONE_MOUNT_BIN" ]; then
+    log_msg "Error: rclone-mount binary not found."
+    exit 1
+  fi
+
+  if [ -z "$RCLONE_WEB_BIN" ]; then
+    log_msg "Error: rclone-web binary not found."
+    exit 1
+  fi
+}
+
 pid_is_running() {
   [ -n "$1" ] && kill -0 "$1" 2>/dev/null
 }
@@ -76,10 +115,9 @@ stop_mounts() {
   for proc in /proc/[0-9]*; do
     PID="${proc##*/}"
     [ -r "$proc/cmdline" ] || continue
-
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *"/vendor/bin/rclone mount "*|*" rclone mount "*)
+      *"rclone mount "*|*"rclone-mount "*)
         kill "$PID" 2>/dev/null
         ;;
     esac
@@ -90,10 +128,9 @@ stop_mounts() {
   for proc in /proc/[0-9]*; do
     PID="${proc##*/}"
     [ -r "$proc/cmdline" ] || continue
-
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *"/vendor/bin/rclone mount "*|*" rclone mount "*)
+      *"rclone mount "*|*"rclone-mount "*)
         kill -9 "$PID" 2>/dev/null
         ;;
     esac
@@ -105,10 +142,10 @@ stop_mounts() {
 start_mounts() {
   log_msg "Starting rclone mounts..."
 
-  /vendor/bin/rclone listremotes | sed 's/:$//' | while read -r remote; do
+  "$RCLONE_BIN" listremotes | sed 's/:$//' | while read -r remote; do
     [ -n "$remote" ] || continue
     log_msg "Mounting $remote => /mnt/rclone-$remote => /sdcard/$remote"
-    /vendor/bin/rclone-mount "$remote" --daemon
+    "$RCLONE_MOUNT_BIN" "$remote" --daemon
   done
 
   log_msg "All remotes mounted."
@@ -129,8 +166,9 @@ start_sync() {
 start_web() {
   case "$RCLONE_RC_ADDR" in
     :*)
-      LOCAL_IP="$(ip route get 1 2>/dev/null | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p')"
-      URL="http://${LOCAL_IP:-localhost}${RCLONE_RC_ADDR}"
+      LOCAL_IP="$(ip addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1)"
+      [ -z "$LOCAL_IP" ] && LOCAL_IP="$(ip route get 1 2>/dev/null | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p')"
+      URL="http://${LOCAL_IP:-127.0.0.1}${RCLONE_RC_ADDR}"
       ;;
     *)
       URL="$RCLONE_RC_ADDR"
@@ -138,7 +176,7 @@ start_web() {
   esac
 
   log_msg "RClone Web GUI will start at: ${URL}"
-  nohup rclone-web > "$RCLONE_LOG_DIR/rclone-web.log" 2>&1 &
+  nohup "$RCLONE_WEB_BIN" > "$RCLONE_LOG_DIR/rclone-web.log" 2>&1 &
   PID=$!
   echo "$PID" > "$RCLONEWEB_PID"
   log_msg "RClone Web GUI started with PID($PID)."
@@ -175,6 +213,7 @@ stop_stack() {
 }
 
 load_env
+init_bins
 
 ACTION="${1:-restart}"
 

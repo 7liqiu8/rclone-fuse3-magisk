@@ -6,7 +6,7 @@ set -a
 . "$BASE/env"
 set +a
 
-[ -f "$RCLONE_CONFIG_DIR/env" ] && {
+[ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/env" ] && {
   set -a
   . "$RCLONE_CONFIG_DIR/env"
   set +a
@@ -39,34 +39,32 @@ find_bin() {
   command -v "$NAME" 2>/dev/null
 }
 
-RCLONE_BIN="$(find_bin rclone)"
-FUSERMOUNT_BIN="$(find_bin fusermount3)"
+bind_if_needed() {
+  SRC="$1"
+  DST="$2"
 
-if [ -z "$RCLONE_BIN" ]; then
+  mkdir -p "$DST" || return 1
+  mount | grep -q " $DST " 2>/dev/null || mount --bind "$SRC" "$DST"
+}
+
+RCLONE_BIN="$(find_bin rclone)"
+[ -z "$RCLONE_BIN" ] && {
   echo "Error: rclone binary not found."
   exit 1
-fi
-
-if [ -z "$FUSERMOUNT_BIN" ]; then
-  echo "Error: fusermount3 binary not found."
-  exit 1
-fi
+}
 
 NAME="$1"
-
-if [ -z "$NAME" ]; then
+[ -z "$NAME" ] && {
   echo "Usage: $0 <name>"
-  echo "name: the name of the rclone remote storage and will be used as the mount point"
-  echo "mounts the rclone remote storage to sdcard/<name>"
   exit 1
-fi
+}
 
 shift
 
 MNT_DIR="/mnt/rclone-$NAME"
 mkdir -p "$MNT_DIR"
 
-nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" --daemon "$@"
+nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" "$@"
 RC=$?
 
 if [ "$RC" -eq 0 ]; then
@@ -74,19 +72,12 @@ if [ "$RC" -eq 0 ]; then
   mkdir -p "$MEDIA_ENDPOINT"
   chown media_rw:media_rw "$MEDIA_ENDPOINT" 2>/dev/null
 
-  PASS_THROUGH="/mnt/pass_through/0/emulated/0/$NAME"
-  mkdir -p "$PASS_THROUGH" || {
-    echo "Failed to prepare $PASS_THROUGH"
-    exit 1
-  }
-  mount --bind "$MNT_DIR" "$PASS_THROUGH"
-
-  DEFAULT_BINDPOINT="/mnt/runtime/default/emulated/0/$NAME"
-  mkdir -p "$DEFAULT_BINDPOINT" || {
-    echo "Failed to prepare $DEFAULT_BINDPOINT"
-    exit 1
-  }
-  mount | grep -q "$DEFAULT_BINDPOINT" || mount --bind "$MNT_DIR" "$DEFAULT_BINDPOINT"
+  bind_if_needed "$MNT_DIR" "$MEDIA_ENDPOINT"
+  bind_if_needed "$MNT_DIR" "/mnt/pass_through/0/emulated/0/$NAME"
+  bind_if_needed "$MNT_DIR" "/mnt/runtime/default/emulated/0/$NAME"
+  bind_if_needed "$MNT_DIR" "/mnt/runtime/read/emulated/0/$NAME"
+  bind_if_needed "$MNT_DIR" "/mnt/runtime/write/emulated/0/$NAME"
+  bind_if_needed "$MNT_DIR" "/mnt/runtime/full/emulated/0/$NAME"
 fi
 
 exit "$RC"

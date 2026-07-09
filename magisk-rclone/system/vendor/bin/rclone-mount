@@ -1,36 +1,69 @@
 #!/system/bin/sh
-#load environment file
+
 set -a && . "${RCLONEDIR:-/data/adb/modules/rclone}/env" && set +a
 
-# Get the first argument as the name
-NAME=$1
+find_bin() {
+  NAME="$1"
+  BASE="${RCLONEDIR:-/data/adb/modules/rclone}"
+
+  for BIN in \
+    "$BASE/vendor/bin/$NAME" \
+    "$BASE/system/vendor/bin/$NAME" \
+    "$BASE/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    if [ -x "$BIN" ]; then
+      echo "$BIN"
+      return 0
+    fi
+  done
+
+  command -v "$NAME" 2>/dev/null
+}
+
+RCLONE_BIN="$(find_bin rclone)"
+
+if [ -z "$RCLONE_BIN" ]; then
+  echo "Error: rclone binary not found."
+  exit 1
+fi
+
+NAME="$1"
 
 if [ -z "$NAME" ]; then
   echo "Usage: $0 <name>"
   echo "name: the name of the rclone remote storage and will be used as the mount point"
   echo "mounts the rclone remote storage to sdcard/<name>"
-else
-  shift
-
-  # Run the rclone mount command with low priority, mounting remote storage to a local directory
-  MNT_DIR="/mnt/rclone-$NAME"
-  mkdir -p "$MNT_DIR"
-  nice -n 1 rclone mount "$NAME:" "$MNT_DIR" "$@"
-
-  # If the mount is successful, bind the mount point to other paths
-  if [ $? -eq 0 ]; then
-    MEDIA_ENDPOINT="/data/media/0/$NAME"
-    mkdir -p "$MEDIA_ENDPOINT"
-    chown media_rw:media_rw "$MEDIA_ENDPOINT"
- 
-    # Bind to the pass_through path
-    PASS_THROUGH="/mnt/pass_through/0/emulated/0/$NAME"
-    mkdir -p "$PASS_THROUGH" || { echo "Failed to prepare $PASS_THROUGH"; exit 1; }
-    mount --bind "$MNT_DIR" "$PASS_THROUGH"
-
-    # Bind to the default runtime path
-    DEFAULT_BINDPOINT="/mnt/runtime/default/emulated/0/$NAME" 
-    mkdir -p "$DEFAULT_BINDPOINT" || { echo "Failed to prepare $DEFAULT_BINDPOINT"; exit 1; }
-    mount | grep -q "$DEFAULT_BINDPOINT" || mount --bind "$MNT_DIR" "$DEFAULT_BINDPOINT"
-  fi
+  exit 1
 fi
+
+shift
+
+MNT_DIR="/mnt/rclone-$NAME"
+mkdir -p "$MNT_DIR"
+
+nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" "$@"
+RC=$?
+
+if [ "$RC" -eq 0 ]; then
+  MEDIA_ENDPOINT="/data/media/0/$NAME"
+  mkdir -p "$MEDIA_ENDPOINT"
+  chown media_rw:media_rw "$MEDIA_ENDPOINT" 2>/dev/null
+
+  PASS_THROUGH="/mnt/pass_through/0/emulated/0/$NAME"
+  mkdir -p "$PASS_THROUGH" || {
+    echo "Failed to prepare $PASS_THROUGH"
+    exit 1
+  }
+  mount --bind "$MNT_DIR" "$PASS_THROUGH"
+
+  DEFAULT_BINDPOINT="/mnt/runtime/default/emulated/0/$NAME"
+  mkdir -p "$DEFAULT_BINDPOINT" || {
+    echo "Failed to prepare $DEFAULT_BINDPOINT"
+    exit 1
+  }
+  mount | grep -q "$DEFAULT_BINDPOINT" || mount --bind "$MNT_DIR" "$DEFAULT_BINDPOINT"
+fi
+
+exit "$RC"

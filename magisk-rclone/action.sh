@@ -213,6 +213,7 @@ stop_stack() {
 }
 
 load_env
+mkdir -p "$RCLONE_LOG_DIR"
 init_bins
 
 ACTION="${1:-restart}"

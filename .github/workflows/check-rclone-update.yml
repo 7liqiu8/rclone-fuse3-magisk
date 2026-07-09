@@ -1,9 +1,9 @@
 name: Check Rclone Updates
 
 on:
-  schedule:
+#  schedule:
     # Run daily at 10:00 UTC (北京时间下午6点)
-    - cron: '0 10 * * *'
+#    - cron: '0 10 * * *'
   workflow_dispatch: # Allow manual trigger
 
 jobs:

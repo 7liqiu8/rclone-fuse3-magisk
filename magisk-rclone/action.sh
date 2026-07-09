@@ -117,36 +117,64 @@ umount_if_mounted() {
 stop_mounts() {
   log_msg "Stopping rclone mounts..."
 
-  for remote in $("${RCLONE_BIN}" listremotes 2>/dev/null | sed 's/:$//'); do
-    [ -n "$remote" ] || continue
-    umount_if_mounted "/mnt/runtime/full/emulated/0/$remote"
-    umount_if_mounted "/mnt/runtime/write/emulated/0/$remote"
-    umount_if_mounted "/mnt/runtime/read/emulated/0/$remote"
-    umount_if_mounted "/mnt/runtime/default/emulated/0/$remote"
-    umount_if_mounted "/mnt/pass_through/0/emulated/0/$remote"
-    umount_if_mounted "/data/media/0/$remote"
-    umount_if_mounted "/mnt/rclone-$remote"
+  umount_if_mounted() {
+    TARGET="$1"
+    mount | grep -q " $TARGET " 2>/dev/null && umount -l "$TARGET" 2>/dev/null
+  }
+
+  FUSERMOUNT_BIN="$(find_bin fusermount3)"
+
+  log_msg "Unmounting Android bind mounts..."
+  if [ -n "$RCLONE_BIN" ]; then
+    "$RCLONE_BIN" listremotes 2>/dev/null | sed 's/:$//' | while read -r remote; do
+      [ -n "$remote" ] || continue
+      umount_if_mounted "/mnt/runtime/full/emulated/0/$remote"
+      umount_if_mounted "/mnt/runtime/write/emulated/0/$remote"
+      umount_if_mounted "/mnt/runtime/read/emulated/0/$remote"
+      umount_if_mounted "/mnt/runtime/default/emulated/0/$remote"
+      umount_if_mounted "/mnt/pass_through/0/emulated/0/$remote"
+      umount_if_mounted "/data/media/0/$remote"
+    done
+  fi
+
+  log_msg "Unmounting rclone FUSE mounts..."
+  if [ -n "$FUSERMOUNT_BIN" ]; then
+    mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+      "$FUSERMOUNT_BIN" -u "$mp" >/dev/null 2>&1 && log_msg "- unmounted: $mp" || log_msg "- failed: $mp"
+    done
+  else
+    log_msg "fusermount3 not found, fallback to lazy umount."
+    mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+      umount -l "$mp" >/dev/null 2>&1 && log_msg "- unmounted: $mp" || log_msg "- failed: $mp"
+    done
+  fi
+
+  log_msg "Cleaning residual mount points..."
+  for mp in /mnt/rclone-*; do
+    [ -e "$mp" ] || continue
+    umount_if_mounted "$mp"
   done
 
+  log_msg "Killing rclone mount processes..."
   for proc in /proc/[0-9]*; do
     PID="${proc##*/}"
     [ -r "$proc/cmdline" ] || continue
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *" rclone mount "*|*"rclone-mount "*)
+      *" rclone mount "*|*"rclone-mount "*|*" rclone rcd "*|*"rclone-web "*)
         kill "$PID" 2>/dev/null
         ;;
     esac
   done
 
-  sleep 2
+  sleep 1
 
   for proc in /proc/[0-9]*; do
     PID="${proc##*/}"
     [ -r "$proc/cmdline" ] || continue
     CMDLINE="$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null)"
     case "$CMDLINE" in
-      *" rclone mount "*|*"rclone-mount "*)
+      *" rclone mount "*|*"rclone-mount "*|*" rclone rcd "*|*"rclone-web "*)
         kill -9 "$PID" 2>/dev/null
         ;;
     esac
@@ -154,6 +182,7 @@ stop_mounts() {
 
   log_msg "Rclone mounts stopped."
 }
+
 
 start_mounts() {
   log_msg "Starting rclone mounts..."

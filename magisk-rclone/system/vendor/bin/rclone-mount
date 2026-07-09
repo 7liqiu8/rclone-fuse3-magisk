@@ -39,12 +39,31 @@ find_bin() {
   command -v "$NAME" 2>/dev/null
 }
 
-bind_if_needed() {
+is_mounted() {
+  TARGET="$1"
+  mount | awk -v target="$TARGET" '$2 == "on" && $3 == target { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+bind_force() {
   SRC="$1"
   DST="$2"
 
-  mkdir -p "$DST" || return 1
-  mount | grep -q " $DST " 2>/dev/null || mount --bind "$SRC" "$DST"
+  mkdir -p "$DST" || {
+    echo "Error: failed to create mount point: $DST" >&2
+    return 1
+  }
+
+  if is_mounted "$DST"; then
+    umount -l "$DST" 2>/dev/null
+    sleep 1
+  fi
+
+  mount --bind "$SRC" "$DST" || {
+    echo "Error: bind mount failed: $SRC -> $DST" >&2
+    return 1
+  }
+
+  return 0
 }
 
 RCLONE_BIN="$(find_bin rclone)"
@@ -62,7 +81,10 @@ NAME="$1"
 shift
 
 MNT_DIR="/mnt/rclone-$NAME"
-mkdir -p "$MNT_DIR"
+mkdir -p "$MNT_DIR" || {
+  echo "Error: failed to create mount dir: $MNT_DIR"
+  exit 1
+}
 
 nice -n 1 "$RCLONE_BIN" mount "$NAME:" "$MNT_DIR" "$@"
 RC=$?
@@ -72,12 +94,23 @@ if [ "$RC" -eq 0 ]; then
   mkdir -p "$MEDIA_ENDPOINT"
   chown media_rw:media_rw "$MEDIA_ENDPOINT" 2>/dev/null
 
-  bind_if_needed "$MNT_DIR" "$MEDIA_ENDPOINT"
-  bind_if_needed "$MNT_DIR" "/mnt/pass_through/0/emulated/0/$NAME"
-  bind_if_needed "$MNT_DIR" "/mnt/runtime/default/emulated/0/$NAME"
-  bind_if_needed "$MNT_DIR" "/mnt/runtime/read/emulated/0/$NAME"
-  bind_if_needed "$MNT_DIR" "/mnt/runtime/write/emulated/0/$NAME"
-  bind_if_needed "$MNT_DIR" "/mnt/runtime/full/emulated/0/$NAME"
+  for DST in \
+    "/data/media/0/$NAME" \
+    "/mnt/pass_through/0/emulated/0/$NAME" \
+    "/mnt/runtime/default/emulated/0/$NAME" \
+    "/mnt/runtime/read/emulated/0/$NAME" \
+    "/mnt/runtime/write/emulated/0/$NAME" \
+    "/mnt/runtime/full/emulated/0/$NAME" \
+    "/mnt/user/0/emulated/0/$NAME" \
+    "/storage/emulated/0/$NAME"
+  do
+    bind_force "$MNT_DIR" "$DST"
+  done
+
+  SDCARD_REAL="$(readlink -f /sdcard 2>/dev/null)"
+  if [ -n "$SDCARD_REAL" ] && [ "$SDCARD_REAL" != "/storage/emulated/0" ]; then
+    bind_force "$MNT_DIR" "$SDCARD_REAL/$NAME"
+  fi
 fi
 
 exit "$RC"

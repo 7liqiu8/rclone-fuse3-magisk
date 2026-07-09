@@ -1,8 +1,25 @@
 #!/system/bin/sh
-# This script runs at boot to ensure rclone mounts are established.
 
-L(){
+L() {
   log -t Magisk "[rclone] $1"
+}
+
+find_bin() {
+  NAME="$1"
+  for BIN in \
+    "$MODPATH/vendor/bin/$NAME" \
+    "$MODPATH/system/vendor/bin/$NAME" \
+    "$MODPATH/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    if [ -x "$BIN" ]; then
+      echo "$BIN"
+      return 0
+    fi
+  done
+
+  command -v "$NAME" 2>/dev/null
 }
 
 L "service script started:"
@@ -10,6 +27,14 @@ L "service script started:"
 [ "${MODPATH}"x = ""x ] && MODPATH="${0%/*}"
 L "load env: $MODPATH/env"
 set -a && . "$MODPATH/env" && set +a
+
+RCLONE_BIN="$(find_bin rclone)"
+RCLONE_MOUNT_BIN="$(find_bin rclone-mount)"
+
+if [ -z "$RCLONE_BIN" ] || [ -z "$RCLONE_MOUNT_BIN" ]; then
+  L "rclone or rclone-mount binary not found, abort."
+  exit 1
+fi
 
 sed -i 's/^description=\(.\{1,4\}| \)\?/description=/' "$RCLONEPROP"
 
@@ -19,10 +44,10 @@ until { [ "$(getprop sys.boot_completed)" = "1" ] && [ "$(getprop init.svc.boota
 done
 L "system is ready after ${COUNT}. Starting the mounting process."
 
-/vendor/bin/rclone listremotes | sed 's/:$//' | while read -r remote; do
+"$RCLONE_BIN" listremotes | sed 's/:$//' | while read -r remote; do
   [ -n "$remote" ] || continue
   L "mount $remote => /mnt/rclone-$remote => /sdcard/$remote"
-  /vendor/bin/rclone-mount "$remote" --daemon
+  "$RCLONE_MOUNT_BIN" "$remote" --daemon
 done
 
 L "all remotes mounted successfully."

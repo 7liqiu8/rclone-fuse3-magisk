@@ -1,5 +1,29 @@
 #!/system/bin/sh
 
+find_bin() {
+  NAME="$1"
+  for BIN in \
+    "$MODPATH/vendor/bin/$NAME" \
+    "$MODPATH/system/vendor/bin/$NAME" \
+    "$MODPATH/system/bin/$NAME" \
+    "/vendor/bin/$NAME" \
+    "/system/bin/$NAME"
+  do
+    if [ -x "$BIN" ]; then
+      echo "$BIN"
+      return 0
+    fi
+  done
+
+  command -v "$NAME" 2>/dev/null
+}
+
+RCLONE_BIN="$(find_bin rclone)"
+if [ -z "$RCLONE_BIN" ]; then
+  echo "Error: rclone binary not found." >> "$RCLONE_LOG_DIR/rclone_sync.log"
+  exit 1
+fi
+
 SYNC_LOG="$RCLONE_LOG_DIR/rclone_sync.log"
 COPY_LOG="$RCLONE_LOG_DIR/rclone_copy.log"
 TASK_COUNT=0
@@ -29,7 +53,7 @@ run_job_file() {
     esac
 
     if eval "set -- $line"; then
-      nice -n 19 ionice -c3 /vendor/bin/rclone "$MODE" "$@" >> "$LOG_FILE" 2>&1
+      nice -n 19 ionice -c3 "$RCLONE_BIN" "$MODE" "$@" >> "$LOG_FILE" 2>&1
       if [ $? -ne 0 ]; then
         echo "Error: rclone $MODE failed for arguments: $line" >> "$LOG_FILE"
       fi

@@ -1,12 +1,23 @@
 #!/system/bin/sh
 
-MODPATH=${MODPATH:-0%/*}
+MODPATH=${MODPATH:-${0%/*}}
 
 set_permissions() {
-  set_perm_recursive $MODPATH 0 0 0755 0644
-  chmod +x $MODPATH/system/vendor/bin/*
-  set_perm_recursive $MODPATH/system/vendor/bin/ 0 0 0755 0755
-  chmod +x $MODPATH/sync.service.sh
+  set_perm_recursive "$MODPATH" 0 0 0755 0644
+
+  if [ -d "$MODPATH/vendor/bin" ]; then
+    chmod +x "$MODPATH"/vendor/bin/* 2>/dev/null
+    set_perm_recursive "$MODPATH/vendor/bin" 0 0 0755 0755
+  fi
+
+  if [ -d "$MODPATH/system/vendor/bin" ]; then
+    chmod +x "$MODPATH"/system/vendor/bin/* 2>/dev/null
+    set_perm_recursive "$MODPATH/system/vendor/bin" 0 0 0755 0755
+  fi
+
+  [ -f "$MODPATH/action.sh" ] && chmod 0755 "$MODPATH/action.sh"
+  [ -f "$MODPATH/service.sh" ] && chmod 0755 "$MODPATH/service.sh"
+  [ -f "$MODPATH/sync.service.sh" ] && chmod 0755 "$MODPATH/sync.service.sh"
 }
 
 set_permissions
@@ -14,8 +25,9 @@ set_permissions
 RCLONEPROP="${MODPATH}/module.prop"
 MODULE_CONFIG="/data/adb/modules/rclone/conf"
 
-if [ -d "$MODULE_CONFIG" ] ; then
+if [ -d "$MODULE_CONFIG" ]; then
   ui_print "✅ 已检测到配置目录 ${MODULE_CONFIG}，已复制到模块目录"
+  rm -rf "$MODPATH/conf"
   cp -r "$MODULE_CONFIG" "$MODPATH/"
   sed -i 's/^description=\(.\{1,4\}| \)\?/description=✅| /' "$RCLONEPROP"
 else

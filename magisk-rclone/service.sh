@@ -13,20 +13,36 @@ find_bin() {
     "/vendor/bin/$NAME" \
     "/system/bin/$NAME"
   do
-    if [ -x "$BIN" ]; then
+    [ -x "$BIN" ] && {
       echo "$BIN"
       return 0
-    fi
+    }
   done
-
   command -v "$NAME" 2>/dev/null
 }
 
 L "service script started:"
 
-[ "${MODPATH}"x = ""x ] && MODPATH="${0%/*}"
+[ -z "$MODPATH" ] && MODPATH="${0%/*}"
 L "load env: $MODPATH/env"
 set -a && . "$MODPATH/env" && set +a
+
+if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/env" ]; then
+  set -a && . "$RCLONE_CONFIG_DIR/env" && set +a
+fi
+
+export RCLONEDIR="$MODPATH"
+export PATH="$MODPATH/vendor/bin:$MODPATH/system/vendor/bin:$PATH"
+
+if [ -z "$RCLONE_CONFIG" ]; then
+  if [ -n "$RCLONE_CONFIG_DIR" ] && [ -f "$RCLONE_CONFIG_DIR/rclone.conf" ]; then
+    export RCLONE_CONFIG="$RCLONE_CONFIG_DIR/rclone.conf"
+  elif [ -f "$MODPATH/conf/rclone.conf" ]; then
+    export RCLONE_CONFIG="$MODPATH/conf/rclone.conf"
+  fi
+fi
+
+[ -n "$RCLONE_LOG_DIR" ] && mkdir -p "$RCLONE_LOG_DIR"
 
 RCLONE_BIN="$(find_bin rclone)"
 RCLONE_MOUNT_BIN="$(find_bin rclone-mount)"
@@ -44,10 +60,10 @@ until { [ "$(getprop sys.boot_completed)" = "1" ] && [ "$(getprop init.svc.boota
 done
 L "system is ready after ${COUNT}. Starting the mounting process."
 
-"$RCLONE_BIN" listremotes | sed 's/:$//' | while read -r remote; do
+"${RCLONE_BIN}" listremotes | sed 's/:$//' | while read -r remote; do
   [ -n "$remote" ] || continue
   L "mount $remote => /mnt/rclone-$remote => /sdcard/$remote"
-  "$RCLONE_MOUNT_BIN" "$remote" --daemon
+  "${RCLONE_MOUNT_BIN}" "$remote" --daemon
 done
 
 L "all remotes mounted successfully."
@@ -55,8 +71,12 @@ L "all remotes mounted successfully."
 sed -i 's/^description=\(.\{1,4\}| \)\?/description=🚀| /' "$RCLONEPROP"
 
 rm -f "$RCLONESYNC_PID"
-nice -n 19 ionice -c3 "$MODPATH/sync.service.sh" &
-echo $! > "$RCLONESYNC_PID"
-L "sync.service.sh started, PID: $(cat "$RCLONESYNC_PID")"
+if [ -f "$RCLONESYNC_CONF" ] || [ -f "$RCLONECOPY_CONF" ]; then
+  nice -n 19 ionice -c3 "$MODPATH/sync.service.sh" &
+  echo $! > "$RCLONESYNC_PID"
+  L "sync.service.sh started, PID: $(cat "$RCLONESYNC_PID")"
+else
+  L "no sync/copy config found."
+fi
 
 L "service script finished!"

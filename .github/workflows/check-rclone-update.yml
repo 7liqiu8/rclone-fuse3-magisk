@@ -1,249 +1,45 @@
-name: Check Rclone Updates
+name: Check Rclone Update
 
 on:
-#  schedule:
-    # Run daily at 10:00 UTC (北京时间下午6点)
-#    - cron: '0 10 * * *'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  check-updates:
+  check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for new Rclone release
-        id: check_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check latest upstream release
+        id: check
+        shell: bash
         run: |
-          # Get current version from module.prop
-          CURRENT_VERSION=$(grep -oP '^version=\Kv.*' magisk-rclone/module.prop)
+          CURRENT_VERSION=$(grep -oP '^version=\K.*' magisk-rclone/module.prop)
+          LATEST_VERSION=$(curl -fsSL https://api.github.com/repos/rclone/rclone/releases/latest | jq -r '.tag_name')
+
           echo "Current version: $CURRENT_VERSION"
-          
-          # Get latest release from Rclone GitHub API with authentication and retry logic
-          echo "Fetching latest Rclone release from GitHub API with authentication..."
-          for i in {1..3}; do
-            RELEASE_INFO=$(curl -s --fail --connect-timeout 30 --max-time 60 \
-              -H "Accept: application/vnd.github.v3+json" \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "User-Agent: rclone-fuse3-magisk-updater" \
-              "https://api.github.com/repos/rclone/rclone/releases/latest") && break
-            echo "Attempt $i failed, retrying in 10 seconds..."
-            sleep 10
-          done
-          
-          # Enhanced error checking
-          if [ -z "$RELEASE_INFO" ]; then
-            echo "❌ Failed to fetch release information from GitHub API"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Check for API errors
-          if echo "$RELEASE_INFO" | grep -q "API rate limit exceeded"; then
-            echo "❌ GitHub API rate limit exceeded"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          if echo "$RELEASE_INFO" | grep -q "Not Found"; then
-            echo "❌ Repository not found or no releases available"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Extract and validate latest release tag
-          LATEST_RELEASE=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
-          echo "Latest release: $LATEST_RELEASE"
-          
-          # Validate that we got a proper version tag
-          if [ -z "$LATEST_RELEASE" ] || [ "$LATEST_RELEASE" = "null" ]; then
-            echo "❌ Failed to parse latest release version"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Enhanced version validation - ensure it's a proper semver tag
-          if [[ ! "$LATEST_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-            echo "❌ Invalid version format: $LATEST_RELEASE"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Compare versions - ensure we're checking the actual latest
-          if [ "$CURRENT_VERSION" != "$LATEST_RELEASE" ]; then
-            echo "✅ New version available: $LATEST_RELEASE"
-            echo "new_version=$LATEST_RELEASE" >> $GITHUB_OUTPUT
-            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-            
-            # Extract release info
-            RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.html_url')
-            RELEASE_NOTES=$(echo "$RELEASE_INFO" | jq -r '.body // "No release notes available"')
-            RELEASE_DATE=$(echo "$RELEASE_INFO" | jq -r '.published_at')
-            
-            echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
-            echo "release_date=$RELEASE_DATE" >> $GITHUB_OUTPUT
-            
-            # Save release notes to file for later use (limit size)
-            echo "$RELEASE_NOTES" | head -50 > /tmp/release_notes.txt
-            
-            echo "📋 Release information extracted successfully"
+          echo "Latest version:  $LATEST_VERSION"
+
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$CURRENT_VERSION" != "$LATEST_VERSION" ]]; then
+            echo "update_available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "ℹ️ No update needed - already at latest version"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "update_available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify latest version authenticity
-        if: steps.check_release.outputs.update_needed == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Workflow summary
+        shell: bash
         run: |
-          NEW_VERSION="${{ steps.check_release.outputs.new_version }}"
-          
-          echo "🔍 Double-checking that $NEW_VERSION is truly the latest release..."
-          
-          # Get recent releases to verify this is actually the latest
-          RECENT_RELEASES=$(curl -s --fail --connect-timeout 30 --max-time 60 \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "User-Agent: rclone-fuse3-magisk-updater" \
-            "https://api.github.com/repos/rclone/rclone/releases?per_page=5")
-          
-          if [ $? -eq 0 ] && [ -n "$RECENT_RELEASES" ]; then
-            LATEST_FROM_LIST=$(echo "$RECENT_RELEASES" | jq -r '.[0].tag_name')
-            echo "Latest from releases list: $LATEST_FROM_LIST"
-            
-            if [ "$NEW_VERSION" != "$LATEST_FROM_LIST" ]; then
-              echo "⚠️ Warning: Mismatch detected between latest release endpoints"
-              echo "Latest endpoint returned: $NEW_VERSION"
-              echo "Releases list returned: $LATEST_FROM_LIST"
-              
-              # Use the one from releases list as it's more authoritative
-              if [[ "$LATEST_FROM_LIST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-                echo "Using releases list version: $LATEST_FROM_LIST"
-                echo "new_version=$LATEST_FROM_LIST" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "✅ Version verification passed - both endpoints agree on $NEW_VERSION"
-            fi
-          else
-            echo "⚠️ Could not verify with releases list, proceeding with original detection"
-          fi
-
-      - name: Validate and update version in module.prop
-        if: steps.check_release.outputs.update_needed == 'true'
-        run: |
-          NEW_VERSION="${{ steps.check_release.outputs.new_version }}"
-          
-          # Enhanced validation for new version format
-          if [[ ! "$NEW_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-            echo "❌ Invalid version format: $NEW_VERSION"
-            exit 1
-          fi
-          
-          # Double-check that this is actually newer than current version
-          CURRENT_VERSION="${{ steps.check_release.outputs.current_version }}"
-          echo "🔍 Validating version update: $CURRENT_VERSION → $NEW_VERSION"
-          
-          # Update version in module.prop
-          sed -i "s/^version=.*/version=$NEW_VERSION/" magisk-rclone/module.prop
-          
-          # Increment versionCode
-          CURRENT_VERSION_CODE=$(grep -oP '^versionCode=\K.*' magisk-rclone/module.prop)
-          NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
-          sed -i "s/^versionCode=.*/versionCode=$NEW_VERSION_CODE/" magisk-rclone/module.prop
-          
-          echo "✅ Updated version to $NEW_VERSION and versionCode to $NEW_VERSION_CODE"
-          
-          # Verify the changes
-          echo "📋 New module.prop content:"
-          cat magisk-rclone/module.prop
-          
-          # Validate that changes were applied correctly
-          UPDATED_VERSION=$(grep -oP '^version=\Kv.*' magisk-rclone/module.prop)
-          UPDATED_VERSION_CODE=$(grep -oP '^versionCode=\K.*' magisk-rclone/module.prop)
-          
-          if [ "$UPDATED_VERSION" != "$NEW_VERSION" ]; then
-            echo "❌ Version update failed - expected $NEW_VERSION, got $UPDATED_VERSION"
-            exit 1
-          fi
-          
-          if [ "$UPDATED_VERSION_CODE" != "$NEW_VERSION_CODE" ]; then
-            echo "❌ Version code update failed - expected $NEW_VERSION_CODE, got $UPDATED_VERSION_CODE"
-            exit 1
-          fi
-          
-          echo "✅ All validations passed"
-
-      - name: Create Pull Request
-        if: steps.check_release.outputs.update_needed == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🚀 Update Rclone to ${{ steps.check_release.outputs.new_version }}"
-          title: "🚀 Update Rclone from ${{ steps.check_release.outputs.current_version }} to ${{ steps.check_release.outputs.new_version }}"
-          body: |
-            ## 🚀 Rclone Version Update
-            
-            **Previous Version:** `${{ steps.check_release.outputs.current_version }}`  
-            **New Version:** `${{ steps.check_release.outputs.new_version }}`  
-            **Release Date:** ${{ steps.check_release.outputs.release_date }}
-            
-            ### 📝 Changes Made
-            - ✅ Updated version in `magisk-rclone/module.prop`
-            - ✅ Incremented versionCode for Magisk module
-            
-            ### 🔗 Release Information
-            **Release URL:** ${{ steps.check_release.outputs.release_url }}
-            
-            ### 📋 Release Notes
-            <details>
-            <summary>Click to expand release notes</summary>
-            
-            ```
-            $(cat /tmp/release_notes.txt)
-            ```
-            
-            </details>
-            
-            ### ⚠️ Testing Required
-            - [ ] Test basic rclone functionality
-            - [ ] Verify mount operations work correctly
-            - [ ] Check compatibility with current Android versions
-            
-            ---
-            
-            *This PR was automatically created by the Rclone update checker workflow.*  
-            *自动检查 Rclone 更新并创建 PR*
-            
-            **Manual Testing Recommended:** Please test the new version before merging.
-          branch: update-rclone-${{ steps.check_release.outputs.new_version }}
-          delete-branch: true
-          labels: |
-            enhancement
-            rclone-update
-            automated-pr
-
-      - name: Summary
-        if: steps.check_release.outputs.update_needed == 'true'
-        run: |
-          echo "✅ Successfully created PR to update Rclone"
-          echo "   From: ${{ steps.check_release.outputs.current_version }}"
-          echo "   To: ${{ steps.check_release.outputs.new_version }}"
-          echo "   Release Date: ${{ steps.check_release.outputs.release_date }}"
-          echo "   Release URL: ${{ steps.check_release.outputs.release_url }}"
-        
-      - name: No Update Needed
-        if: steps.check_release.outputs.update_needed == 'false'
-        run: |
-          CURRENT_VERSION=$(grep -oP '^version=\Kv.*' magisk-rclone/module.prop)
-          echo "ℹ️ Rclone is already up to date (Current: $CURRENT_VERSION)"
-          echo "   No action required - workflow completed successfully"
+          {
+            echo "## Rclone version check"
+            echo ""
+            echo "- Current: `${{ steps.check.outputs.current_version }}`"
+            echo "- Latest:  `${{ steps.check.outputs.latest_version }}`"
+            echo "- Update available: `${{ steps.check.outputs.update_available }}`"
+          } >> "$GITHUB_STEP_SUMMARY"

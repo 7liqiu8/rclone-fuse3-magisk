@@ -18,8 +18,9 @@ cp magisk-rclone magisk-rclone_$ABI -r
 cp libfuse/build/util/fusermount3 magisk-rclone_$ABI/system/vendor/bin/
 chmod +x magisk-rclone_$ABI/system/vendor/bin/*
 
-# 修改 module.prop 中的 updateJson 字段
-UPDATE_JSON_URL="https://github.com/NewFuture/rclone-fuse3-magisk/releases/latest/download/update-$ABI.json"
+# 生成当前仓库对应的更新地址，默认兼容本地构建场景
+REPOSITORY_URL=${GITHUB_REPOSITORY_URL:-https://github.com/NewFuture/rclone-fuse3-magisk}
+UPDATE_JSON_URL="$REPOSITORY_URL/releases/latest/download/update-$ABI.json"
 sed -i "s|^updateJson=.*|updateJson=$UPDATE_JSON_URL|" magisk-rclone_$ABI/module.prop
 
 # 生成对应的 update.json 文件
@@ -27,8 +28,8 @@ cat <<EOF > update-$ABI.json
 {
   "version": "$RCLONE_VERSION",
   "versionCode": $VERSION_CODE,
-  "zipUrl": "https://github.com/NewFuture/rclone-fuse3-magisk/releases/download/$TAG_NAME/magisk-rclone_$ABI.zip",
-  "changelog": "https://github.com/NewFuture/rclone-fuse3-magisk/releases/tag/$TAG_NAME"
+  "zipUrl": "$REPOSITORY_URL/releases/download/$TAG_NAME/magisk-rclone_$ABI.zip",
+  "changelog": "$REPOSITORY_URL/releases/tag/$TAG_NAME"
 }
 EOF
 

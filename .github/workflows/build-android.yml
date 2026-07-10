@@ -51,7 +51,11 @@ jobs:
       - name: Set release metadata
         shell: bash
         run: |
-          VERSION=$(grep -oP '^version=\\K.*' magisk-rclone/module.prop)
+          VERSION=$(sed -n 's/^version=//p' magisk-rclone/module.prop | head -n 1)
+          if [[ -z "$VERSION" ]]; then
+            echo "Failed to read version from magisk-rclone/module.prop" >&2
+            exit 1
+          fi
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             RELEASE_TAG="${GITHUB_REF#refs/tags/}"
           else

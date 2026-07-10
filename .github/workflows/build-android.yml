@@ -2,7 +2,6 @@ name: Build Android
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches:
       - main
@@ -52,15 +51,16 @@ jobs:
       - name: Set release metadata
         shell: bash
         run: |
-          VERSION=$(grep -oP '^version=\K.*' magisk-rclone/module.prop)
+          VERSION=$(grep -oP '^version=\\K.*' magisk-rclone/module.prop)
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             RELEASE_TAG="${GITHUB_REF#refs/tags/}"
           else
-            RELEASE_TAG="$VERSION"
+            RELEASE_TAG="manual-build"
           fi
           echo "MODULE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
           echo "GITHUB_REPOSITORY_URL=https://github.com/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+
 
       - name: Build ${{ matrix.abi }}
         shell: bash
@@ -76,7 +76,6 @@ jobs:
             update-${{ matrix.abi }}.json
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
 
@@ -89,8 +88,11 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'manual-build' }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || 'manual-build' }}
           files: |
             dist/**/*.zip
             dist/**/*.json
           generate_release_notes: true
+          make_latest: true
           fail_on_unmatched_files: true

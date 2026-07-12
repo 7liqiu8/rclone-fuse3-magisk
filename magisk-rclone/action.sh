@@ -55,6 +55,7 @@ init_bins() {
   RCLONE_BIN="$(find_bin rclone)"
   RCLONE_MOUNT_BIN="$(find_bin rclone-mount)"
   RCLONE_WEB_BIN="$(find_bin rclone-web)"
+  FUSERMOUNT_BIN="$(find_bin fusermount3)"
 
   [ -z "$RCLONE_BIN" ] && {
     log_msg "Error: rclone binary not found."
@@ -109,42 +110,18 @@ stop_sync() {
   stop_pid_file "RClone Sync Service" "$RCLONESYNC_PID"
 }
 
-umount_if_mounted() {
-  TARGET="$1"
-  mount | grep -q " $TARGET " 2>/dev/null && umount -l "$TARGET" 2>/dev/null
-}
-
 stop_mounts() {
   log_msg "Stopping rclone mounts..."
-
-  umount_if_mounted() {
-    TARGET="$1"
-    mount | grep -q " $TARGET " 2>/dev/null && umount -l "$TARGET" 2>/dev/null
-  }
-
-  FUSERMOUNT_BIN="$(find_bin fusermount3)"
-
-  log_msg "Unmounting Android bind mounts..."
-  if [ -n "$RCLONE_BIN" ]; then
-    "$RCLONE_BIN" listremotes 2>/dev/null | sed 's/:$//' | while read -r remote; do
-      [ -n "$remote" ] || continue
-      umount_if_mounted "/mnt/runtime/full/emulated/0/$remote"
-      umount_if_mounted "/mnt/runtime/write/emulated/0/$remote"
-      umount_if_mounted "/mnt/runtime/read/emulated/0/$remote"
-      umount_if_mounted "/mnt/runtime/default/emulated/0/$remote"
-      umount_if_mounted "/mnt/pass_through/0/emulated/0/$remote"
-      umount_if_mounted "/data/media/0/$remote"
-    done
-  fi
 
   log_msg "Unmounting rclone FUSE mounts..."
   if [ -n "$FUSERMOUNT_BIN" ]; then
     mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+      [ -n "$mp" ] || continue
       "$FUSERMOUNT_BIN" -u "$mp" >/dev/null 2>&1 && log_msg "- unmounted: $mp" || log_msg "- failed: $mp"
     done
   else
-    log_msg "fusermount3 not found, fallback to lazy umount."
     mount | grep "type fuse.rclone" | awk '{for (i=1; i<=NF; i++) if ($i=="type") print $(i-1)}' | while read -r mp; do
+      [ -n "$mp" ] || continue
       umount -l "$mp" >/dev/null 2>&1 && log_msg "- unmounted: $mp" || log_msg "- failed: $mp"
     done
   fi
@@ -152,7 +129,7 @@ stop_mounts() {
   log_msg "Cleaning residual mount points..."
   for mp in /mnt/rclone-*; do
     [ -e "$mp" ] || continue
-    umount_if_mounted "$mp"
+    umount -l "$mp" 2>/dev/null
   done
 
   log_msg "Killing rclone mount processes..."
@@ -183,13 +160,12 @@ stop_mounts() {
   log_msg "Rclone mounts stopped."
 }
 
-
 start_mounts() {
   log_msg "Starting rclone mounts..."
 
-  "${RCLONE_BIN}" listremotes | sed 's/:$//' | while read -r remote; do
+  "${RCLONE_BIN}" listremotes 2>/dev/null | sed 's/:$//' | while read -r remote; do
     [ -n "$remote" ] || continue
-    log_msg "Mounting $remote => /mnt/rclone-$remote => /sdcard/$remote"
+    log_msg "Mounting $remote => /mnt/rclone-$remote"
     "${RCLONE_MOUNT_BIN}" "$remote" --daemon
   done
 
